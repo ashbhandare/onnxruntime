@@ -81,8 +81,8 @@ struct Pool2DTask final {
   }
 
   void operator()(Eigen::Index c) const {
-    const float* x_d = X_data + c * x_step;
-    float* y_d = Y_data + c * y_step;
+    const T* x_d = X_data + c * x_step;
+    T* y_d = Y_data + c * y_step;
 
     for (int64_t ph = 0; ph < pooled_height; ++ph) {
       int64_t hstart = ph * stride_h - pads[0];
@@ -144,8 +144,8 @@ struct Pool3DTask final {
   }
 
   void operator()(Eigen::Index c) const {
-    const float* x_d = X_data + c * x_step;
-    float* y_d = Y_data + c * y_step;
+    const T* x_d = X_data + c * x_step;
+    T* y_d = Y_data + c * y_step;
 
     for (int64_t ph = 0; ph < pooled_height; ++ph) {
       int64_t hstart = ph * stride_h - pads[0];
@@ -181,9 +181,10 @@ struct Pool3DTask final {
   }
 };
 
+template <typename T>
 struct MaxPool1DTask final {
-  const float* X_data;
-  float* Y_data;
+  const T* X_data;
+  T* Y_data;
   int64_t* I_data;
   int64_t x_step;
   int64_t y_step;
@@ -204,13 +205,13 @@ struct MaxPool1DTask final {
     }
   }
   void operator()(Eigen::Index c) const {
-    const float* x_d = X_data + c * x_step;
-    float* y_d = Y_data + c * y_step;
+    const T* x_d = X_data + c * x_step;
+    T* y_d = Y_data + c * y_step;
     int64_t* i_d = I_data ? I_data + c * y_step : nullptr;
     for (int64_t ph = 0; ph < pooled_height; ++ph) {
       int64_t hstart = ph * stride_h - pads[0];
       int64_t hend = hstart + kernel_shape[0] * dilation_h;
-      float Yh = std::numeric_limits<float>::lowest();
+      T Yh = std::numeric_limits<T>::lowest();
       int64_t h_index = -1;
       for (int64_t h = hstart; h < hend; h += dilation_h) {
         if (math::is_a_ge_zero_and_a_lt_b(h, height)) {
@@ -227,9 +228,10 @@ struct MaxPool1DTask final {
   }
 };
 
+template <typename T>
 struct MaxPool2DTask final {
-  const float* X_data;
-  float* Y_data;
+  const T* X_data;
+  T* Y_data;
   int64_t* I_data;
   int64_t x_step;
   int64_t y_step;
@@ -257,8 +259,8 @@ struct MaxPool2DTask final {
   }
 
   void operator()(Eigen::Index c) const {
-    const float* x_d = X_data + c * x_step;
-    float* y_d = Y_data + c * y_step;
+    const T* x_d = X_data + c * x_step;
+    T* y_d = Y_data + c * y_step;
     int64_t* i_d = I_data ? I_data + c * y_step : nullptr;
     for (int64_t ph = 0; ph < pooled_height; ++ph) {
       int64_t hstart = ph * stride_h - pads[0];
@@ -267,7 +269,7 @@ struct MaxPool2DTask final {
         int64_t wstart = pw * stride_w - pads[1];
         int64_t wend = wstart + kernel_shape[1] * dilation_w;
         const int64_t pool_index = ph * pooled_width + pw;
-        float Yh = std::numeric_limits<float>::lowest();
+        T Yh = std::numeric_limits<T>::lowest();
         int64_t h_index = -1;
         int64_t w_index = -1;
         for (int64_t h = hstart; h < hend; h += dilation_h) {
@@ -293,9 +295,10 @@ struct MaxPool2DTask final {
   }
 };
 
+template <typename T>
 struct MaxPool3DTask {
-  const float* X_data;
-  float* Y_data;
+  const T* X_data;
+  T* Y_data;
   int64_t* I_data;
   int64_t x_step;
   int64_t y_step;
@@ -328,8 +331,8 @@ struct MaxPool3DTask {
   }
 
   void operator()(Eigen::Index c) const {
-    const float* x_d = X_data + c * x_step;
-    float* y_d = Y_data + c * y_step;
+    const T* x_d = X_data + c * x_step;
+    T* y_d = Y_data + c * y_step;
     int64_t* i_d = I_data ? I_data + c * y_step : nullptr;
 
     for (int64_t ph = 0; ph < pooled_height; ++ph) {
@@ -342,7 +345,7 @@ struct MaxPool3DTask {
           int64_t dstart = pd * stride_d - pads[2];
           int64_t dend = dstart + kernel_shape[2] * dilation_d;
           const int64_t pool_index = ph * pooled_width * pooled_depth + pw * pooled_depth + pd;
-          float Yh = std::numeric_limits<float>::lowest();
+          T Yh = std::numeric_limits<T>::lowest();
           int64_t h_index = -1;
           int64_t w_index = -1;
           int64_t d_index = -1;
