@@ -52,11 +52,18 @@ class EnvThread {
   virtual ~EnvThread() = default;
 };
 
-//Parameters that are required for creating a new thread
+// Parameters that are required to create a set of threads for a thread pool
 struct ThreadOptions {
+  // Stack size for a new thread. If it is 0, the operating system uses the same value as the stack that's specified for
+  // the main thread, which is usually set in the main executable(not controlled by onnxruntime.dll).
   unsigned int stack_size = 0;
-  //Index is thread id, value is CPU ID, starting from zero
-  //If the vector is empty, no explict affinity binding
+
+  // Thread affinity means a thread can only run on the logical processors that the thread is allowed to run on.
+  // If the vector is not empty, set the affinity of each thread to just one CPU.
+  // Index is thread index, value is CPU ID, starting from zero. For example, the first thread in the pool will be bound
+  // to the logical processor with id of affinity[0]. If the vector is empty, the thread can run on all the processors
+  // its process can run on. NOTE: When hyperthreading is enabled, for example, on a 4 cores 8 physical threads CPU,
+  // processor group [0,1,2,3] may only contain half of the physical cores.
   std::vector<size_t> affinity;
 };
 /// \brief An interface used by the onnxruntime implementation to
@@ -74,11 +81,25 @@ class Env {
   };
   using EnvThread = onnxruntime::EnvThread;
   virtual ~Env() = default;
-
-  virtual EnvThread* CreateThread(const ORTCHAR_T* name_prefix, int index,
-                                  unsigned (*start_address)(int id, Eigen::ThreadPoolInterface* param),
-                                  Eigen::ThreadPoolInterface* param, const ThreadOptions& thread_options) = 0;
+  // clang-format off
+  /**
+   * Start a new thread for a thread pool
+   * \param name_prefix A human-readable string for debugging purpose, can be NULL
+   * \param index The index value of the thread, for each thread pool instance, the index should start from 0 and be continuous.
+   * \param start_address The entry point of thread
+   * \param threadpool The thread pool that the new thread belongs to
+   * \param thread_options options to create the thread
+   *
+   * Caller is responsible for deleting the returned value
+   */
+  // clang-format on
+  virtual EnvThread* CreateThread(_In_opt_ const ORTCHAR_T* name_prefix, int index,
+                                  _In_ unsigned (*start_address)(int id, Eigen::ThreadPoolInterface* param),
+                                  Eigen::ThreadPoolInterface* threadpool, const ThreadOptions& thread_options) = 0;
   virtual Task CreateTask(std::function<void()> f) = 0;
+  /**
+   * Execute the task 't' in current thread
+   */
   virtual void ExecuteTask(const Task& t) = 0;
 
   /// \brief Returns a default environment suitable for the current operating

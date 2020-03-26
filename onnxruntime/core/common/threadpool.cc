@@ -18,9 +18,6 @@ limitations under the License.
 
 #include "core/platform/threadpool.h"
 #include "core/common/common.h"
-#ifndef EIGEN_USE_THREADS
-#define EIGEN_USE_THREADS
-#endif
 #include "core/util/eigen_common_wrapper.h"
 #include "core/platform/EigenNonBlockingThreadPool.h"
 #include "core/platform/ort_mutex.h"
@@ -188,16 +185,109 @@ void ThreadPool::ParallelForFixedBlockSizeScheduling(const std::ptrdiff_t total,
   counter.Wait();
 }
 
-void ThreadPool::ParallelFor(std::ptrdiff_t total, const TensorOpCost& cost_per_unit,
-                             const std::function<void(std::ptrdiff_t first, std::ptrdiff_t)>& fn) {
-  static_assert(sizeof(onnxruntime::TensorOpCost) == sizeof(Eigen::TensorOpCost), "TensorOpCost size mismatch");
-  threadpool_device_->parallelFor(total, *reinterpret_cast<const Eigen::TensorOpCost*>(&cost_per_unit), fn);
+struct ParallelForBlock {
+  ptrdiff_t size;   // block size
+  ptrdiff_t count;  // number of blocks
+};
+using CostModel = Eigen::TensorCostModel<Eigen::ThreadPoolDevice>;
+
+// Calculates block size based on (1) the iteration cost and (2) parallel
+// efficiency. We want blocks to be not too small to mitigate parallelization
+// overheads; not too large to mitigate tail effect and potential load
+// imbalance and we also want number of blocks to be evenly dividable across
+// threads.
+static ParallelForBlock CalculateParallelForBlock(const ptrdiff_t n, const Eigen::TensorOpCost& cost,
+                                                  std::function<ptrdiff_t(ptrdiff_t)> block_align, int num_threads) {
+  const double block_size_f = 1.0 / CostModel::taskSize(1, cost);
+  const ptrdiff_t max_oversharding_factor = 4;
+  ptrdiff_t block_size = Eigen::numext::mini(
+      n,
+      Eigen::numext::maxi<ptrdiff_t>(Eigen::divup<ptrdiff_t>(n, max_oversharding_factor * num_threads), static_cast<ptrdiff_t>(block_size_f)));
+  const ptrdiff_t max_block_size = Eigen::numext::mini(n, 2 * block_size);
+
+  if (block_align) {
+    ptrdiff_t new_block_size = block_align(block_size);
+    assert(new_block_size >= block_size);
+    block_size = Eigen::numext::mini(n, new_block_size);
+  }
+
+  ptrdiff_t block_count = Eigen::divup(n, block_size);
+
+  // Calculate parallel efficiency as fraction of total CPU time used for
+  // computations:
+  double max_efficiency =
+      static_cast<double>(block_count) / (Eigen::divup<int>(block_count, num_threads) * num_threads);
+
+  // Now try to increase block size up to max_block_size as long as it
+  // doesn't decrease parallel efficiency.
+  for (ptrdiff_t prev_block_count = block_count; max_efficiency < 1.0 && prev_block_count > 1;) {
+    // This is the next block size that divides size into a smaller number
+    // of blocks than the current block_size.
+    ptrdiff_t coarser_block_size = Eigen::divup(n, prev_block_count - 1);
+    if (block_align) {
+      ptrdiff_t new_block_size = block_align(coarser_block_size);
+      assert(new_block_size >= coarser_block_size);
+      coarser_block_size = Eigen::numext::mini(n, new_block_size);
+    }
+    if (coarser_block_size > max_block_size) {
+      break;  // Reached max block size. Stop.
+    }
+    // Recalculate parallel efficiency.
+    const ptrdiff_t coarser_block_count = Eigen::divup(n, coarser_block_size);
+    assert(coarser_block_count < prev_block_count);
+    prev_block_count = coarser_block_count;
+    const double coarser_efficiency =
+        static_cast<double>(coarser_block_count) / (Eigen::divup<int>(coarser_block_count, num_threads) * num_threads);
+    if (coarser_efficiency + 0.01 >= max_efficiency) {
+      // Taking it.
+      block_size = coarser_block_size;
+      block_count = coarser_block_count;
+      if (max_efficiency < coarser_efficiency) {
+        max_efficiency = coarser_efficiency;
+      }
+    }
+  }
+
+  return {block_size, block_count};
+}
+
+void ThreadPool::ParallelFor(std::ptrdiff_t n, const TensorOpCost& c,
+                             const std::function<void(std::ptrdiff_t first, std::ptrdiff_t)>& f) {
+  ORT_ENFORCE(n >= 0);
+  Eigen::TensorOpCost cost{c.bytes_loaded, c.bytes_stored, c.compute_cycles};
+  // Compute small problems directly in the caller thread.
+  if (n <= 1 || NumThreads() == 1 ||
+      Eigen::TensorCostModel<Eigen::ThreadPoolDevice>::numThreads(static_cast<double>(n), cost, static_cast<int>(NumThreads())) == 1) {
+    f(0, n);
+    return;
+  }
+
+  // Compute block size and total count of blocks.
+  ParallelForBlock block = CalculateParallelForBlock(n, cost, nullptr, NumThreads());
+
+  // Recursively divide size into halves until we reach block_size.
+  // Division code rounds mid to block_size, so we are guaranteed to get
+  // block_count leaves that do actual computations.
+  Barrier barrier(static_cast<unsigned int>(block.count));
+  std::function<void(ptrdiff_t, ptrdiff_t)> handleRange;
+  handleRange = [=, &handleRange, &barrier, &f](ptrdiff_t firstIdx, ptrdiff_t lastIdx) {
+    while (lastIdx - firstIdx > block.size) {
+      // Split into halves and schedule the second half on a different thread.
+      const ptrdiff_t midIdx = firstIdx + Eigen::divup((lastIdx - firstIdx) / 2, block.size) * block.size;
+      underlying_threadpool_->Schedule([=, &handleRange]() { handleRange(midIdx, lastIdx); });
+      lastIdx = midIdx;
+    }
+    // Single block or less, execute directly.
+    f(firstIdx, lastIdx);
+    barrier.Notify();
+  };
+
+  underlying_threadpool_->Schedule([=, &handleRange]() { handleRange(0, n); });
+  barrier.Wait();
 }
 void ThreadPool::ParallelFor(std::ptrdiff_t total, double cost_per_unit,
                              const std::function<void(std::ptrdiff_t first, std::ptrdiff_t)>& fn) {
-  ORT_ENFORCE(total >= 0);
-  threadpool_device_->parallelFor(total, Eigen::TensorOpCost(0, 0, static_cast<double>(cost_per_unit)),
-                                  [&fn](std::ptrdiff_t first, std::ptrdiff_t last) { fn(first, last); });
+  ParallelFor(total, TensorOpCost{0, 0, static_cast<double>(cost_per_unit)}, fn);
 }
 
 void ThreadPool::ParallelForWithWorkerId(std::ptrdiff_t total, int64_t cost_per_unit,

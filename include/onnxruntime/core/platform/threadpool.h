@@ -38,9 +38,9 @@ struct ThreadPoolDevice;
 namespace onnxruntime {
 
 struct TensorOpCost {
-  double bytes_loaded_;
-  double bytes_stored_;
-  double compute_cycles_;
+  double bytes_loaded;
+  double bytes_stored;
+  double compute_cycles;
 };
 
 template <typename Environment>
