@@ -9,7 +9,7 @@
 #include "core/framework/op_kernel_context_internal.h"
 #include "core/util/math_cpuonly.h"
 #include "assert.h"
-#ifndef USE_OPENMP
+#ifndef _OPENMP
 #include "core/util/eigen_common_wrapper.h"
 #endif
 
@@ -77,13 +77,13 @@ class CDistOneBlock {
 
 template <typename T, typename ElemFunc>
 void cdist(const T* a, const T* b, T* dest, size_t ma, size_t mb, size_t n, concurrency::ThreadPool* tp) {
-#ifndef USE_OPENMP
+#ifndef _OPENMP
   if (tp == nullptr) {
 #else
   (void)tp;
 #endif
     return cdist_single_threaded<T, ElemFunc>(a, b, dest, ma, mb, n);
-#ifndef USE_OPENMP
+#ifndef _OPENMP
   }
   tp->ParallelFor(ma * mb, static_cast<double>(3 * n), CDistOneBlock<T, ElemFunc>(a, b, dest, mb, n));
 #endif

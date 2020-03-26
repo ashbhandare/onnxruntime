@@ -182,30 +182,6 @@ class ThreadPool {
   void ParallelFor(std::ptrdiff_t total, const SchedulingParams& scheduling_params,
                    const std::function<void(std::ptrdiff_t, std::ptrdiff_t)>& fn);
 
-  // Shards the "total" units of work. For more details, see "ParallelFor".
-  //
-  // The function is passed a thread_id between 0 and NumThreads() *inclusive*.
-  // This is because some work can happen on the caller thread while the threads
-  // in the pool are also being used.
-  //
-  // The caller can allocate NumThreads() + 1 separate buffers for each thread.
-  // Each thread can safely write to the buffer given by its id without
-  // synchronization. However, the worker fn may be called multiple times
-  // sequentially with the same id.
-  //
-  // At most NumThreads() unique ids will actually be used, and only a few may
-  // be used for small workloads. If each buffer is expensive, the buffers
-  // should be stored in an array initially filled with null, and a buffer
-  // should be allocated by fn the first time that the id is used.
-  void ParallelForWithWorkerId(std::ptrdiff_t total, int64_t cost_per_unit,
-                               const std::function<void(std::ptrdiff_t, std::ptrdiff_t, int)>& fn);
-
-  // Similar to ParallelForWithWorkerId above, but takes the specified
-  // scheduling strategy into account.
-  // `fn` takes 3 parameters: start, limit, id. Id starts from 1.
-  void ParallelForWithWorkerId(std::ptrdiff_t total, const SchedulingParams& scheduling_params,
-                               const std::function<void(std::ptrdiff_t, std::ptrdiff_t, int)>& fn);
-
   // Returns the number of threads in the pool.
   int NumThreads() const;
 
@@ -222,7 +198,7 @@ class ThreadPool {
   // cutting them by halves
   void SimpleParallelFor(std::ptrdiff_t total, std::function<void(std::ptrdiff_t)> fn);
 
-#ifdef USE_OPENMP
+#ifdef _OPENMP
   template <typename F>
   inline static void TryBatchParallelFor(ThreadPool*, std::ptrdiff_t total, F&& fn, std::ptrdiff_t /*num_batches*/) {
 #pragma omp parallel for
@@ -281,10 +257,11 @@ class ThreadPool {
   }
 #endif
 
+#ifndef _OPENMP
   Eigen::ThreadPoolDevice& Device() {
     return *threadpool_device_;
   }
-
+#endif
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(ThreadPool);
 
  private:
@@ -304,7 +281,9 @@ class ThreadPool {
   // eigen_threadpool_ is instantiated and owned by thread::ThreadPool if
   // user_threadpool is not in the constructor.
   std::unique_ptr<ThreadPoolTempl<Env>> eigen_threadpool_;
+#ifndef _OPENMP
   std::unique_ptr<Eigen::ThreadPoolDevice> threadpool_device_;
+#endif
   // Copied from MlasPartitionWork
   static void PartitionWork(std::ptrdiff_t ThreadId, std::ptrdiff_t ThreadCount, std::ptrdiff_t TotalWork,
                             std::ptrdiff_t* WorkIndex, std::ptrdiff_t* WorkRemaining) {

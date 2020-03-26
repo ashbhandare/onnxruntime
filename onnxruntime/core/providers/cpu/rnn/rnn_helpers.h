@@ -117,7 +117,7 @@ void ReverseSequence(gsl::span<const T> inputs,
   for (int i = 0; i < batch_size; i++) {
     int seq_len = sequence_lengths[i];
 
-#ifdef USE_OPENMP
+#ifdef _OPENMP
 // Parallel execute the loop.
 #pragma omp parallel for
 #endif
@@ -129,7 +129,7 @@ void ReverseSequence(gsl::span<const T> inputs,
       gsl::copy(src, dest);
     }
 
-#ifdef USE_OPENMP
+#ifdef _OPENMP
 // Parallel execute the loop.
 #pragma omp parallel for
 #endif

@@ -22,7 +22,7 @@
 #define BACKEND_PROC "CPU"
 #endif
 
-#if USE_OPENMP
+#if _OPENMP
 #define BACKEND_OPENMP "-OPENMP"
 #else
 #define BACKEND_OPENMP ""

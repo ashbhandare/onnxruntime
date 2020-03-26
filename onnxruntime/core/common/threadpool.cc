@@ -89,15 +89,23 @@ ThreadPool::ThreadPool(Env* env, const ThreadOptions& thread_options, const NAME
   eigen_threadpool_ =
       onnxruntime::make_unique<ThreadPoolTempl<Env>>(name, num_threads, low_latency_hint, *env, thread_options_);
   underlying_threadpool_ = eigen_threadpool_.get();
+#ifdef _OPENMP
+  ORT_UNUSED_PARAMETER(allocator);
+#else
   threadpool_device_ =
       onnxruntime::make_unique<Eigen::ThreadPoolDevice>(underlying_threadpool_, num_threads, allocator);
+#endif
 }
 
 ThreadPool::ThreadPool(Eigen::ThreadPoolInterface* user_threadpool, Eigen::Allocator* allocator)
     : thread_options_(ThreadOptions()) {
   underlying_threadpool_ = user_threadpool;
+#ifdef _OPENMP
+  ORT_UNUSED_PARAMETER(allocator);
+#else
   threadpool_device_ = onnxruntime::make_unique<Eigen::ThreadPoolDevice>(
       underlying_threadpool_, underlying_threadpool_->NumThreads(), allocator);
+#endif
 }
 
 ThreadPool::~ThreadPool() = default;
@@ -288,34 +296,6 @@ void ThreadPool::ParallelFor(std::ptrdiff_t n, const TensorOpCost& c,
 void ThreadPool::ParallelFor(std::ptrdiff_t total, double cost_per_unit,
                              const std::function<void(std::ptrdiff_t first, std::ptrdiff_t)>& fn) {
   ParallelFor(total, TensorOpCost{0, 0, static_cast<double>(cost_per_unit)}, fn);
-}
-
-void ThreadPool::ParallelForWithWorkerId(std::ptrdiff_t total, int64_t cost_per_unit,
-                                         const std::function<void(std::ptrdiff_t, std::ptrdiff_t, int)>& fn) {
-  ORT_ENFORCE(total >= 0);
-  ORT_ENFORCE(total == (int64_t)(std::ptrdiff_t)total);
-
-  threadpool_device_->parallelFor(total, Eigen::TensorOpCost(0, 0, static_cast<double>(cost_per_unit)),
-                                  [this, &fn](std::ptrdiff_t start, std::ptrdiff_t limit) {
-                                    // ParallelFor may use the current thread to
-                                    // do some work synchronously. When calling
-                                    // CurrentThreadId() from outside of the
-                                    // thread pool, we get -1, so we can shift
-                                    // every id up by 1.
-                                    int id = CurrentThreadId() + 1;
-                                    fn(start, limit, id);
-                                  });
-}
-
-void ThreadPool::ParallelForWithWorkerId(std::ptrdiff_t total, const SchedulingParams& scheduling_params,
-                                         const std::function<void(std::ptrdiff_t, std::ptrdiff_t, int)>& fn) {
-  ParallelFor(total, scheduling_params, [this, &fn](std::ptrdiff_t start, std::ptrdiff_t limit) {
-    // We may use the current thread to do some work synchronously.
-    // When calling CurrentThreadId() from outside of the thread
-    // pool, we get -1, so we can shift every id up by 1.
-    int id = CurrentThreadId() + 1;
-    fn(start, limit, id);
-  });
 }
 
 int ThreadPool::NumThreads() const {
